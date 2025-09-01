@@ -1,0 +1,51 @@
+# Optimized Dockerfile for Travis CI builds
+# Multi-stage build for faster CI/CD
+
+# Stage 1: Base image with dependencies
+FROM node:18-alpine AS base
+RUN apk add --no-cache curl
+
+# Stage 2: Dependencies installation
+FROM base AS deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production --prefer-offline --no-audit
+
+# Stage 3: Development dependencies for building
+FROM base AS build-deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --prefer-offline --no-audit
+
+# Stage 4: Build the application
+FROM build-deps AS builder
+WORKDIR /app
+COPY . .
+RUN npm run build
+
+# Stage 5: Production image
+FROM nginx:alpine AS production
+
+# Add curl for health checks
+RUN apk add --no-cache curl
+
+# Copy built application
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Copy custom nginx configuration (optional)
+# COPY nginx.conf /etc/nginx/nginx.conf
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:80 || exit 1
+
+# Expose port
+EXPOSE 80
+
+# Add labels for better image management
+LABEL maintainer="your-email@example.com"
+LABEL version="1.0"
+LABEL description="React Vite Application"
+
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]

@@ -1,0 +1,246 @@
+# Travis CI Configuration for React/Vite Application
+language: node_js
+
+# Node.js versions to test against
+node_js:
+  - "18"
+  - "20"
+
+# Enable sudo for Docker commands
+sudo: required
+
+# Enable Docker service
+services:
+  - docker
+
+# Cache node_modules for faster builds
+cache:
+  directories:
+    - node_modules
+    - ~/.npm
+
+# Environment variables
+env:
+  global:
+    - CI=true
+    - NODE_ENV=test
+    - DOCKER_IMAGE=your-registry/react-vite-app
+    # Add encrypted environment variables here:
+    # - secure: "encrypted_docker_username"
+    # - secure: "encrypted_docker_password"
+    # - secure: "encrypted_deploy_key"
+
+# Build matrix for different environments
+matrix:
+  include:
+    # Development build (fastest feedback)
+    - node_js: "18"
+      env: BUILD_TYPE=development
+      
+    # Production build with deployment
+    - node_js: "18"
+      env: BUILD_TYPE=production
+      
+    # Security and compatibility check
+    - node_js: "20"
+      env: BUILD_TYPE=compatibility
+
+# Only build specific branches
+branches:
+  only:
+    - main
+    - master
+    - develop
+    - /^release\/.*$/
+    - /^hotfix\/.*$/
+
+# Build stages
+stages:
+  - name: "Validate"
+    if: type = pull_request OR branch != main
+  - name: "Test"
+    if: type != pull_request
+  - name: "Build & Package"
+    if: branch IN (main, master, develop)
+  - name: "Deploy Staging"
+    if: branch = develop
+  - name: "Deploy Production"
+    if: branch IN (main, master)
+
+jobs:
+  include:
+    # Stage 1: Code validation
+    - stage: "Validate"
+      name: "Lint and Security Audit"
+      node_js: "18"
+      script:
+        - echo "🔍 Running code validation..."
+        - npm run lint
+        - npm audit --audit-level=moderate
+        - echo "✅ Code validation completed"
+
+    # Stage 2: Comprehensive testing
+    - stage: "Test"
+      name: "Unit Tests with Coverage"
+      node_js: "18"
+      script:
+        - echo "🧪 Running tests with coverage..."
+        - npm run test -- --run --coverage
+        - echo "✅ Tests completed"
+      after_success:
+        # Upload coverage to Codecov (optional)
+        - bash <(curl -s https://codecov.io/bash)
+
+    - stage: "Test"
+      name: "Node.js Compatibility Test"
+      node_js: "20"
+      script:
+        - echo "🔄 Testing Node.js compatibility..."
+        - npm run test -- --run
+        - npm run build
+        - echo "✅ Compatibility test completed"
+
+    # Stage 3: Build and package
+    - stage: "Build & Package"
+      name: "Production Build"
+      node_js: "18"
+      script:
+        - echo "🏗️ Building production application..."
+        - npm run build
+        - ls -la dist/
+        - du -sh dist/
+        - echo "✅ Production build completed"
+      
+      # Build Docker image
+      after_success:
+        - echo "🐳 Building Docker image..."
+        - docker build -t $DOCKER_IMAGE:$TRAVIS_BUILD_NUMBER .
+        - docker tag $DOCKER_IMAGE:$TRAVIS_BUILD_NUMBER $DOCKER_IMAGE:latest
+        
+        # Push to registry (uncomment when configured)
+        # - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+        # - docker push $DOCKER_IMAGE:$TRAVIS_BUILD_NUMBER
+        # - docker push $DOCKER_IMAGE:latest
+        
+        - echo "✅ Docker image built successfully"
+
+    # Stage 4: Deploy to staging
+    - stage: "Deploy Staging"
+      name: "Deploy to Staging Environment"
+      node_js: "18"
+      script:
+        - echo "🚀 Deploying to staging environment..."
+        
+        # Build and deploy
+        - npm run build
+        - docker build -t $DOCKER_IMAGE:staging .
+        
+        # Deploy to staging server (example)
+        # - echo "Deploying to staging server..."
+        # - docker save $DOCKER_IMAGE:staging | ssh user@staging-server 'docker load'
+        # - ssh user@staging-server 'docker stop react-app-staging || true'
+        # - ssh user@staging-server 'docker rm react-app-staging || true'
+        # - ssh user@staging-server "docker run -d --name react-app-staging -p 3001:80 $DOCKER_IMAGE:staging"
+        
+        # Health check
+        # - sleep 30
+        # - curl -f http://staging-server:3001 || exit 1
+        
+        - echo "✅ Staging deployment completed"
+
+    # Stage 5: Deploy to production
+    - stage: "Deploy Production"
+      name: "Deploy to Production Environment"
+      node_js: "18"
+      script:
+        - echo "🌍 Deploying to production environment..."
+        
+        # Build production
+        - npm run build
+        - docker build -t $DOCKER_IMAGE:production .
+        - docker tag $DOCKER_IMAGE:production $DOCKER_IMAGE:$TRAVIS_BUILD_NUMBER
+        
+        # Production deployment (example)
+        # - echo "Deploying to production server..."
+        # - docker save $DOCKER_IMAGE:production | ssh user@prod-server 'docker load'
+        # - ssh user@prod-server 'docker-compose -f docker-compose.prod.yml down'
+        # - ssh user@prod-server "docker-compose -f docker-compose.prod.yml up -d"
+        
+        # Health check
+        # - sleep 60
+        # - curl -f http://production-server || exit 1
+        
+        - echo "✅ Production deployment completed"
+
+# Install dependencies
+install:
+  - echo "📦 Installing dependencies..."
+  - npm ci --prefer-offline --no-audit
+
+# Pre-build setup
+before_script:
+  - echo "🔧 Setting up build environment..."
+  - echo "Node.js version: $(node --version)"
+  - echo "npm version: $(npm --version)"
+  - echo "Build type: $BUILD_TYPE"
+  - echo "Travis build number: $TRAVIS_BUILD_NUMBER"
+  - echo "Travis branch: $TRAVIS_BRANCH"
+
+# Default script (runs for basic builds)
+script:
+  - echo "🚀 Running default build process..."
+  - npm run lint
+  - npm run test -- --run
+  - npm run build
+
+# After script success
+after_success:
+  - echo "🎉 Build completed successfully!"
+  - echo "Build artifacts created in dist/ directory"
+
+# After script failure
+after_failure:
+  - echo "❌ Build failed!"
+  - echo "Check the logs above for error details"
+
+# Cleanup
+after_script:
+  - echo "🧹 Cleaning up..."
+  - docker system prune -f --volumes || true
+
+# Notifications
+notifications:
+  email:
+    recipients:
+      - your-email@example.com
+    on_success: change  # Only notify when status changes
+    on_failure: always
+    
+  slack:
+    rooms:
+      # Add your encrypted Slack webhook here:
+      # - secure: "encrypted_slack_webhook"
+    on_success: change
+    on_failure: always
+    template:
+      - "Build %{result}: %{repository_name}/%{branch} (%{commit}) by %{author}"
+      - "Build details: %{build_url}"
+
+# Deploy configuration (for automatic deployments)
+deploy:
+  # Deploy to staging on develop branch
+  - provider: script
+    script: bash deploy-staging.sh
+    on:
+      branch: develop
+      condition: $BUILD_TYPE = production
+      
+  # Deploy to production on main/master branch
+  - provider: script
+    script: bash deploy-production.sh
+    on:
+      branch: main
+      condition: $BUILD_TYPE = production
+
+# Build timeout (30 minutes)
+timeout: 1800
